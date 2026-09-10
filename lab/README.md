@@ -65,64 +65,14 @@ area show CONFIRMED or REJECTED.
   end-to-end evidence.
 
 ## Reflection (~400 words)
+**1. How does the Spring Boot backend determine which user owns a Service Request?**
+Basically, when I log in, the backend sends back a JWT token to my React app. Every time I try to do something after that (like view or edit a request), I have to attach that token to the request. The backend reads the token and pulls out my username from it, so that's how it knows it's me and not someone else.
 
-**1. In-process vs. separate microservices over a network — what do you get
-for free, and what would you need to add back if split?**
+**2. Why should ReactJS not send a userId to determine which records a user can access?**
+Because that would be super easy to fake. Like, if my React app just sent "userId: 1" with every request, anyone could just open the browser console and change it to "userId: 2" and boom, they're looking at someone else's data. So the frontend can't be trusted with that kind of thing — the backend has to figure out who's really asking by checking the token itself.
 
-Keeping Order and Inventory in one process gets us a lot for free: calls are
-just Java method invocations, so they're fast (nanoseconds, not
-milliseconds), type-safe at compile time, and share one transaction — the
-stock decrement and the order row can commit or roll back together with a
-single `@Transactional` boundary. There's also no serialization, no network
-client to configure, and no partial-failure handling, because if the JVM is
-up, the "call" cannot fail for network reasons. Deployment is simpler too:
-one artifact, one process to monitor.
+**3. What happens when a request is sent without a valid JWT?**
+It just gets rejected with a 401 error. The backend checks for the token first before it even lets the request go through to the actual controller/logic, so if there's no token or it's expired/fake, it stops right there.
 
-If we split Inventory into its own microservice, we'd have to add back
-everything the in-process boundary was hiding: a network client (REST or
-gRPC) with timeouts and retries, serialization/deserialization, service
-discovery or at least a configured base URL, and authentication between
-services. Because a single ACID transaction across two databases isn't
-realistic, we'd need a strategy for consistency — e.g., a saga: reserve
-stock via Inventory's API, then create the order, and compensate (release
-the reservation) if the order write fails. We'd also need observability
-(distributed tracing, correlation IDs) to debug a request that now spans two
-processes, and a plan for what Order does when Inventory is slow or down
-(circuit breakers, fallback behavior) instead of assuming it always
-responds.
-
-**2. Why does package-private visibility on `InventoryServiceImpl` matter
-for the module boundary — what breaks if it's public?**
-
-Making `InventoryServiceImpl` package-private turns the module boundary from
-a convention into something the Java compiler enforces: code outside
-`edu.cit.alvarado.inventory` literally cannot name or inject the
-implementation class, so `OrderService` is forced to depend on the
-`InventoryService` interface. That keeps the contract stable and small on
-purpose. If `InventoryServiceImpl` were public, nothing would stop the Order
-module (or any future module) from injecting it directly, calling
-implementation-specific methods that aren't on the interface, or relying on
-internal behavior that was never meant to be a promise. Over time that
-erodes the boundary — Inventory can no longer refactor its internals (change
-persistence, add caching, swap the repository) without risking a break
-somewhere in Order, because the "internal" class quietly became a public
-dependency.
-
-**3. When would you extract Inventory into its own microservice, and what
-would need to change in your code to do it?**
-
-I'd extract it when Inventory needs to scale, deploy, or be owned
-independently from Order — for example, if inventory reads/writes become a
-bottleneck under load that Order doesn't share, if a separate team owns
-stock/warehouse logic and needs its own release cadence, or if other
-services besides Order (e.g., a future Shipping or Reporting service) need
-to read inventory data too, making a shared internal Java call impossible.
-Code-wise: replace the `InventoryService` implementation used by Order with
-an HTTP (or messaging) client that implements the same interface, so
-`OrderService` itself barely changes — that's the payoff of coding to the
-interface from the start. Behind that client I'd add retry/timeout policies,
-map network and 4xx/5xx failures into the existing `ReservationResult`
-rejection path, and replace the shared-transaction guarantee with a saga or
-outbox pattern so a failed order write can compensate an already-approved
-reservation. Inventory would get its own database (or at least its own
-schema) instead of sharing tables directly with Order.
+**4. Where is authorization enforced in your implementation?**
+It's in my service and repository layer. Whenever I try to get, edit, or delete a service request, the query specifically checks that the "createdBy" field matches whoever's logged in right now. So even if I somehow tried to access someone else's request by ID, it just won't show up because the query wouldn't match.
