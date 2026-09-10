@@ -76,3 +76,10 @@ It just gets rejected with a 401 error. The backend checks for the token first b
 
 **4. Where is authorization enforced in your implementation?**
 It's in my service and repository layer. Whenever I try to get, edit, or delete a service request, the query specifically checks that the "createdBy" field matches whoever's logged in right now. So even if I somehow tried to access someone else's request by ID, it just won't show up because the query wouldn't match.
+
+Screenshots:
+<img width="1919" height="945" alt="image" src="https://github.com/user-attachments/assets/ba9e1e93-ce88-4d33-884c-7c36754572d6" />
+<img width="1919" height="945" alt="image" src="https://github.com/user-attachments/assets/ccb3551f-84bd-4f53-8d7d-69ca52858c88" />
+<img width="1919" height="950" alt="image" src="https://github.com/user-attachments/assets/29b29220-f452-4f82-9b6b-228d26941453" />
+
+<img width="1919" height="1032" alt="image" src="https://github.com/user-attachments/assets/bcdb05a0-a599-43ab-a32f-3913e8e4cc0b" />
