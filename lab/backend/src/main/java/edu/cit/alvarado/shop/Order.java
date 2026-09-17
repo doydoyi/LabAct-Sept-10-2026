@@ -1,15 +1,20 @@
 package edu.cit.alvarado.shop;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "orders")
@@ -19,12 +24,6 @@ public class Order {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "order_id")
     private Long orderId;
-
-    @Column(name = "product_id", nullable = false)
-    private String productId;
-
-    @Column(name = "quantity", nullable = false)
-    private int quantity;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
@@ -36,32 +35,39 @@ public class Order {
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
+    // EAGER on purpose: OrderService's @Transactional method returns before
+    // OrderController reads these items, and open-in-view is disabled, so a
+    // LAZY collection would throw once the session is closed. This dataset
+    // is tiny (a handful of line items per order), so EAGER is the simpler,
+    // safer choice here.
+    @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    private List<OrderItem> items = new ArrayList<>();
+
     protected Order() {
         // required by JPA
     }
 
-    public Order(String productId, int quantity, OrderStatus status, String reason, OffsetDateTime createdAt) {
-        this.productId = productId;
-        this.quantity = quantity;
+    public Order(OrderStatus status, String reason, OffsetDateTime createdAt) {
         this.status = status;
         this.reason = reason;
         this.createdAt = createdAt;
+    }
+
+    public void addItem(OrderItem item) {
+        item.assignOrder(this);
+        items.add(item);
     }
 
     public Long getOrderId() {
         return orderId;
     }
 
-    public String getProductId() {
-        return productId;
-    }
-
-    public int getQuantity() {
-        return quantity;
-    }
-
     public OrderStatus getStatus() {
         return status;
+    }
+
+    public void setStatus(OrderStatus status) {
+        this.status = status;
     }
 
     public String getReason() {
@@ -70,5 +76,9 @@ public class Order {
 
     public OffsetDateTime getCreatedAt() {
         return createdAt;
+    }
+
+    public List<OrderItem> getItems() {
+        return items;
     }
 }

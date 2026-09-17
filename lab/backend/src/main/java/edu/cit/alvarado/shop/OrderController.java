@@ -1,16 +1,15 @@
 package edu.cit.alvarado.shop;
 
 import edu.cit.alvarado.inventory.InventoryItem;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * The only HTTP entry point in the app. This is the "external client
- * integration via REST" style - everything upstream of this (Order calling
- * Inventory) stays in-process.
- */
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/orders")
 public class OrderController {
@@ -23,10 +22,45 @@ public class OrderController {
 
     @PostMapping
     public OrderResponse placeOrder(@RequestBody OrderRequest request) {
-        Order order = orderService.placeOrder(request.productId(), request.quantity());
-        InventoryItem item = orderService.currentInventory(request.productId());
+        OrderResult result = orderService.placeOrder(request.items());
+        Order order = result.order();
 
-        InventoryView view = new InventoryView(item.getProductId(), item.getName(), item.getStock());
-        return new OrderResponse(order.getStatus().name(), order.getReason(), view);
+        List<InventoryView> inventoryViews = toInventoryViews(order);
+        return new OrderResponse(order.getStatus().name(), order.getReason(), result.itemOutcomes(), inventoryViews);
+    }
+
+    @PostMapping("/{orderId}/cancel")
+    public OrderHistoryView cancelOrder(@PathVariable Long orderId) {
+        Order order = orderService.cancelOrder(orderId);
+        return toHistoryView(order);
+    }
+
+    @GetMapping
+    public List<OrderHistoryView> listOrders() {
+        return orderService.listOrders().stream()
+                .map(this::toHistoryView)
+                .toList();
+    }
+
+    private List<InventoryView> toInventoryViews(Order order) {
+        List<InventoryItem> allInventory = orderService.currentInventory();
+
+        return order.getItems().stream()
+                .map(OrderItem::getProductId)
+                .distinct()
+                .map(productId -> allInventory.stream()
+                        .filter(item -> item.getProductId().equals(productId))
+                        .findFirst()
+                        .orElseThrow())
+                .map(item -> new InventoryView(item.getProductId(), item.getName(), item.getStock()))
+                .toList();
+    }
+
+    private OrderHistoryView toHistoryView(Order order) {
+        List<LineItem> items = order.getItems().stream()
+                .map(oi -> new LineItem(oi.getProductId(), oi.getQuantity()))
+                .toList();
+        return new OrderHistoryView(order.getOrderId(), order.getStatus().name(), order.getReason(),
+                order.getCreatedAt(), items);
     }
 }

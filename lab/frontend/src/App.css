@@ -6,66 +6,123 @@ body {
   margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: #f4f5f7;
+  color: #1a1a1a;
 }
 
 .page {
-  max-width: 480px;
-  margin: 48px auto;
-  padding: 32px;
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  max-width: 720px;
+  margin: 32px auto 64px;
+  padding: 0 16px;
 }
 
 h1 {
+  font-size: 1.5rem;
+}
+
+h2 {
   margin-top: 0;
-  font-size: 1.4rem;
+  font-size: 1.1rem;
 }
 
-.order-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.card {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  padding: 24px;
+  margin-bottom: 20px;
 }
 
-.order-form label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.banner {
+  padding: 12px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
   font-size: 0.9rem;
-  font-weight: 600;
-  color: #333;
 }
 
-.order-form select,
-.order-form input {
+.banner-error {
+  background: #fdecec;
+  border: 1px solid #d93025;
+  color: #a4231b;
+}
+
+/* --- Cart builder --- */
+.cart-builder {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cart-builder select {
+  flex: 2;
+}
+
+.cart-builder input {
+  flex: 1;
+  width: 80px;
+}
+
+.cart-builder select,
+.cart-builder input {
   padding: 8px 10px;
-  font-size: 1rem;
+  font-size: 0.95rem;
   border: 1px solid #ccc;
   border-radius: 4px;
 }
 
+.cart-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+  border-top: 1px solid #eee;
+}
+
+.cart-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #eee;
+  font-size: 0.9rem;
+}
+
 button {
-  padding: 10px 16px;
-  font-size: 1rem;
+  padding: 9px 16px;
+  font-size: 0.9rem;
   font-weight: 600;
-  border: none;
+  border: 1px solid #ccc;
   border-radius: 4px;
-  background: #2563eb;
-  color: white;
+  background: white;
   cursor: pointer;
 }
 
+button.primary {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+  width: 100%;
+  margin-top: 4px;
+}
+
 button:disabled {
-  background: #93b4f2;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
+.link-button {
+  border: none;
+  background: none;
+  color: #2563eb;
+  padding: 0;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+/* --- Result banner --- */
 .result {
-  margin-top: 24px;
-  padding: 16px;
+  margin-top: 16px;
+  padding: 14px 16px;
   border-radius: 6px;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
 .result-status {
@@ -86,13 +143,119 @@ button:disabled {
   color: #a4231b;
 }
 
-.result-error {
-  background: #fff4e5;
-  border: 1px solid #e08a00;
-  color: #8a5300;
+.result-items {
+  margin: 8px 0 0;
+  padding-left: 18px;
 }
 
-.result-inventory {
+/* --- Tables --- */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eee;
+}
+
+.row-low-stock td {
+  background: #fff8e6;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.badge-low {
+  background: #f6b400;
+  color: #4a3300;
+  margin-left: 8px;
+}
+
+.badge-confirmed {
+  background: #e6f6ea;
+  color: #1e7e34;
+}
+
+.badge-rejected {
+  background: #fdecec;
+  color: #a4231b;
+}
+
+.badge-cancelled {
+  background: #eceff1;
+  color: #455a64;
+}
+
+/* --- Order history --- */
+.order-list {
+  list-style: none;
+  padding: 0;
   margin: 0;
-  color: #444;
+}
+
+.order-row {
+  padding: 12px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.order-row-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.order-id {
+  font-weight: 600;
+}
+
+.order-items {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.order-item-chip {
+  background: #f1f3f5;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 0.8rem;
+}
+
+.order-reason {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+}
+
+.muted {
+  color: #666;
+  font-size: 0.82rem;
+}
+
+/* --- Notification feed --- */
+.feed-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.feed-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #eee;
+  font-size: 0.88rem;
 }

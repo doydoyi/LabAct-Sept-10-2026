@@ -1,4 +1,6 @@
 package edu.cit.alvarado.shop;
 
-public record OrderRequest(String productId, int quantity) {
+import java.util.List;
+
+public record OrderRequest(List<LineItem> items) {
 }

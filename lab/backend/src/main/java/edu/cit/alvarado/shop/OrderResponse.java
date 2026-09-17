@@ -1,4 +1,6 @@
 package edu.cit.alvarado.shop;
 
-public record OrderResponse(String status, String reason, InventoryView inventory) {
+import java.util.List;
+
+public record OrderResponse(String status, String reason, List<ItemOutcome> items, List<InventoryView> inventory) {
 }
