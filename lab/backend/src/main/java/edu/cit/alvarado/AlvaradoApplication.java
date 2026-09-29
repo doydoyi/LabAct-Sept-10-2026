@@ -2,12 +2,16 @@ package edu.cit.alvarado;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Entry point. Sits in the parent package edu.cit.alvarado so that component
  * scanning picks up both edu.cit.alvarado.shop (Order module) and
  * edu.cit.alvarado.inventory (Inventory module).
  */
+@EnableAsync
+@EnableScheduling
 @SpringBootApplication
 public class AlvaradoApplication {
 
