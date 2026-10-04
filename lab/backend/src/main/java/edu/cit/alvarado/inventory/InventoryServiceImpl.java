@@ -1,6 +1,10 @@
 package edu.cit.alvarado.inventory;
 
 import edu.cit.alvarado.inventory.event.LowStockEvent;
+import edu.cit.alvarado.inventory.event.StockChangedEvent;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -21,6 +25,9 @@ class InventoryServiceImpl implements InventoryService {
     private final InventoryRepository inventoryRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final int lowStockThreshold;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     InventoryServiceImpl(InventoryRepository inventoryRepository,
                           ApplicationEventPublisher eventPublisher,
@@ -44,8 +51,7 @@ class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional
     public ReservationResult reserve(String productId, int quantity) {
-        InventoryItem item = inventoryRepository.findById(productId)
-                .orElseThrow(() -> new IllegalArgumentException("Unknown product: " + productId));
+        InventoryItem item = lockForUpdate(productId);
 
         if (quantity <= 0) {
             return ReservationResult.rejected("Quantity must be greater than zero", item);
@@ -59,6 +65,7 @@ class InventoryServiceImpl implements InventoryService {
 
         item.setStock(item.getStock() - quantity);
         InventoryItem saved = inventoryRepository.save(item);
+        eventPublisher.publishEvent(new StockChangedEvent(saved.getProductId(), saved.getStock()));
 
         // Business rule: after ANY successful reserve, warn if stock is now low.
         // This fires regardless of caller (single- or multi-item order), because
@@ -73,9 +80,28 @@ class InventoryServiceImpl implements InventoryService {
     @Override
     @Transactional
     public void restock(String productId, int quantity) {
-        InventoryItem item = inventoryRepository.findById(productId)
-                .orElseThrow(() -> new IllegalArgumentException("Unknown product: " + productId));
+        InventoryItem item = lockForUpdate(productId);
         item.setStock(item.getStock() + quantity);
-        inventoryRepository.save(item);
+        InventoryItem saved = inventoryRepository.save(item);
+        eventPublisher.publishEvent(new StockChangedEvent(saved.getProductId(), saved.getStock()));
+    }
+
+    /**
+     * Re-reads the row with SELECT ... FOR UPDATE. Every write path goes
+     * through here so two orders arriving at the same moment (one from the
+     * React UI, one from a marketplace) can never both read the same stock
+     * figure and oversell it - the second one waits for the first to commit
+     * and then sees the real, already-decremented number. refresh() (rather
+     * than a plain locking query) matters: OrderService has usually already
+     * loaded this entity during validation, and a query would hand back that
+     * stale in-memory copy instead of the current database value.
+     */
+    private InventoryItem lockForUpdate(String productId) {
+        InventoryItem item = entityManager.find(InventoryItem.class, productId);
+        if (item == null) {
+            throw new IllegalArgumentException("Unknown product: " + productId);
+        }
+        entityManager.refresh(item, LockModeType.PESSIMISTIC_WRITE);
+        return item;
     }
 }

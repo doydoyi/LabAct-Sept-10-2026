@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
  * instead of only discovering it the first time a reorder is attempted.
  */
 @Component
+@Order(100) // after the marketplace channel's startup (first heartbeat goes out first)
 class CatalogStartupCheck implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(CatalogStartupCheck.class);

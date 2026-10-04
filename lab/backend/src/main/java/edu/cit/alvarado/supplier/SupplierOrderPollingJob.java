@@ -35,7 +35,7 @@ class SupplierOrderPollingJob {
         this.eventPublisher = eventPublisher;
     }
 
-    @Scheduled(fixedDelayString = "${app.supplier.poll-interval-ms:120000}")
+    @Scheduled(initialDelay = 20_000, fixedDelayString = "${app.supplier.poll-interval-ms:120000}")
     void pollOpenOrders() {
         for (SupplierOrderStatus status : OPEN) {
             for (SupplierOrder order : repository.findByStatus(status)) {

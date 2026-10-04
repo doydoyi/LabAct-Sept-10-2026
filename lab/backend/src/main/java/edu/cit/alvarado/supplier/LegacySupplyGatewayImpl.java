@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Component
@@ -14,6 +15,8 @@ class LegacySupplyGatewayImpl implements SupplierGateway {
     private static final List<SupplierOrderStatus> IN_FLIGHT =
             List.of(SupplierOrderStatus.PENDING, SupplierOrderStatus.ACCEPTED,
                     SupplierOrderStatus.PICKING, SupplierOrderStatus.SHIPPED);
+    private static final List<SupplierOrderStatus> SUBMITTED_NOT_DELIVERED =
+            List.of(SupplierOrderStatus.ACCEPTED, SupplierOrderStatus.PICKING, SupplierOrderStatus.SHIPPED);
 
     private final SupplierOrderRepository repository;
     private final LegacySupplyClient client;
@@ -26,8 +29,13 @@ class LegacySupplyGatewayImpl implements SupplierGateway {
         this.properties = properties;
     }
 
+    /**
+     * synchronized: the low-stock listener (async) and the marketplace
+     * channel can both ask for a reorder of the same product at the same
+     * moment - the in-flight check below only works if they take turns.
+     */
     @Override
-    public SupplierOrderResult reorder(String productId, int currentStock) {
+    public synchronized SupplierOrderResult reorder(String productId, int currentStock) {
         SupplierProperties.CatalogEntry entry = properties.getCatalog().get(productId);
         if (entry == null || entry.getSku() == null || entry.getSku().isBlank()) {
             // Configuration bug, not a supplier failure - fail loudly so it
@@ -57,6 +65,25 @@ class LegacySupplyGatewayImpl implements SupplierGateway {
         order = repository.save(order);
 
         return attemptSubmit(order);
+    }
+
+    @Override
+    public boolean hasOpenPurchaseOrder(String productId) {
+        return !repository.findByProductIdAndStatusIn(productId, SUBMITTED_NOT_DELIVERED).isEmpty();
+    }
+
+    @Override
+    public boolean hasReorderInFlight(String productId) {
+        return !repository.findByProductIdAndStatusIn(productId, IN_FLIGHT).isEmpty();
+    }
+
+    @Override
+    public Optional<String> supplierSkuFor(String productId) {
+        SupplierProperties.CatalogEntry entry = properties.getCatalog().get(productId);
+        if (entry == null || entry.getSku() == null || entry.getSku().isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(entry.getSku());
     }
 
     /**
@@ -115,8 +142,12 @@ class LegacySupplyGatewayImpl implements SupplierGateway {
             case 30 -> SupplierOrderStatus.SHIPPED;
             case 40 -> SupplierOrderStatus.DELIVERED;
             default -> {
-                log.warn("Unrecognized LegacySupply StatusCode {} - leaving order unmapped", code);
-                yield SupplierOrderStatus.PENDING;
+                // Not PENDING: that would mean "resubmit me" and the retry
+                // job would chase this order forever, and it would block
+                // any new reorder of the product as "still in flight".
+                log.error("Unrecognized LegacySupply StatusCode {} - order marked UNRECOGNIZED, "
+                        + "no stock expected from it", code);
+                yield SupplierOrderStatus.UNRECOGNIZED;
             }
         };
     }

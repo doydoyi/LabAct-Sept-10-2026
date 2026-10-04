@@ -74,6 +74,10 @@ public class Order {
         return reason;
     }
 
+    void setReason(String reason) {
+        this.reason = reason;
+    }
+
     public OffsetDateTime getCreatedAt() {
         return createdAt;
     }

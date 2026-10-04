@@ -1,5 +1,6 @@
 package edu.cit.alvarado.supplier;
 
+import edu.cit.alvarado.instance.AppInstance;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -19,17 +20,22 @@ import java.time.Duration;
 class LegacySupplyClient {
 
     private static final int CONNECT_TIMEOUT_SECONDS = 3;
+    /** LegacySupply "may slow down at any time" (Lab 4) - give a slow but
+     *  successful response a fair chance before calling it a failure. */
+    private static final int REQUEST_TIMEOUT_SECONDS = 8;
     private static final int MAX_ATTEMPTS = 3;
 
     private final SupplierProperties properties;
     private final HttpClient httpClient;
+    private final AppInstance appInstance;
 
     /** Current session token. Reset to null whenever LegacySupply tells us
      *  it's no longer valid, so the next call re-authenticates automatically. */
     private volatile String sessionToken;
 
-    LegacySupplyClient(SupplierProperties properties) {
+    LegacySupplyClient(SupplierProperties properties, AppInstance appInstance) {
         this.properties = properties;
+        this.appInstance = appInstance;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS))
                 .build();
@@ -157,7 +163,9 @@ class LegacySupplyClient {
         try {
             HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(properties.getBaseUrl() + path))
-                    .timeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS));
+                    .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
+                    // Lab 4: every LegacySupply call names the running instance.
+                    .header(AppInstance.HEADER, appInstance.id());
 
             if (withSession && sessionToken != null) {
                 builder.header("X-LS-Session", sessionToken);

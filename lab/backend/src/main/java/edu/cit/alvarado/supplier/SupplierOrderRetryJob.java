@@ -28,7 +28,7 @@ class SupplierOrderRetryJob {
         this.gateway = gateway;
     }
 
-    @Scheduled(fixedDelayString = "${app.supplier.retry-interval-ms:60000}")
+    @Scheduled(initialDelay = 20_000, fixedDelayString = "${app.supplier.retry-interval-ms:60000}")
     void retryPendingOrders() {
         List<SupplierOrder> pending = repository.findByStatus(SupplierOrderStatus.PENDING);
         if (pending.isEmpty()) {

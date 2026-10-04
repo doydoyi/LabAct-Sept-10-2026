@@ -12,7 +12,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Predicate;
 
 /**
  * Order module orchestration. Depends only on the public InventoryService
@@ -87,6 +91,85 @@ public class OrderService {
         return new OrderResult(saved, confirmedOutcomes);
     }
 
+    /**
+     * Same all-or-nothing rule as placeOrder(), for callers that can wait
+     * for stock. If every line can be reserved now the order is CONFIRMED
+     * exactly as placeOrder() would. If not, the lines that are short are
+     * handed to backorderAllowed: when it answers true the order is saved as
+     * BACKORDERED (nothing reserved yet - see fulfillBackorder()), otherwise
+     * it is REJECTED.
+     *
+     * The Order module has no opinion on WHEN backordering is acceptable
+     * (that depends on things like open supplier purchase orders, which the
+     * Order module deliberately knows nothing about) - the caller decides.
+     */
+    @Transactional
+    public Order placeOrderOrBackorder(List<LineItem> lineItems, Predicate<List<LineItem>> backorderAllowed) {
+        List<LineItem> merged = mergeByProduct(lineItems);
+        List<LineItem> shortItems = findShortItems(merged);
+
+        if (shortItems.isEmpty()) {
+            return placeOrder(merged).order();
+        }
+
+        if (backorderAllowed.test(shortItems)) {
+            Order order = buildOrder(OrderStatus.BACKORDERED,
+                    "Waiting for restock of " + describe(shortItems), merged);
+            return orderRepository.save(order);
+        }
+
+        Order order = buildOrder(OrderStatus.REJECTED,
+                "One or more items exceeded available stock; no items were reserved", merged);
+        Order saved = orderRepository.save(order);
+        eventPublisher.publishEvent(new OrderRejectedEvent(saved.getOrderId()));
+        return saved;
+    }
+
+    /**
+     * Tries to turn a BACKORDERED order into a CONFIRMED one, all-or-nothing:
+     * either every line is reserved now, or nothing is and the order stays
+     * BACKORDERED. Orders that are not (or no longer) backordered are
+     * returned unchanged.
+     */
+    @Transactional
+    public Order fulfillBackorder(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+        if (order.getStatus() != OrderStatus.BACKORDERED) {
+            return order;
+        }
+
+        List<LineItem> lineItems = order.getItems().stream()
+                .map(oi -> new LineItem(oi.getProductId(), oi.getQuantity()))
+                .toList();
+        if (!findShortItems(lineItems).isEmpty()) {
+            return order;
+        }
+
+        for (LineItem li : lineItems) {
+            ReservationResult result = inventoryService.reserve(li.productId(), li.quantity());
+            if (!result.approved()) {
+                throw new IllegalStateException(
+                        "Stock for " + li.productId() + " changed concurrently; aborting backorder fill");
+            }
+        }
+
+        order.setStatus(OrderStatus.CONFIRMED);
+        order.setReason("Backorder filled after restock; all items reserved");
+        Order saved = orderRepository.save(order);
+        eventPublisher.publishEvent(new OrderPlacedEvent(saved.getOrderId()));
+        return saved;
+    }
+
+    /** Lines (merged per product) that current stock cannot cover. */
+    public List<LineItem> shortItems(List<LineItem> lineItems) {
+        return findShortItems(mergeByProduct(lineItems));
+    }
+
+    public Optional<Order> findOrder(Long orderId) {
+        return orderRepository.findById(orderId);
+    }
+
     @Transactional
     public Order cancelOrder(Long orderId) {
         Order order = orderRepository.findById(orderId)
@@ -116,6 +199,27 @@ public class OrderService {
 
     public List<InventoryItem> currentInventory() {
         return inventoryService.listAll();
+    }
+
+    private List<LineItem> findShortItems(List<LineItem> lineItems) {
+        return lineItems.stream()
+                .filter(li -> inventoryService.getItem(li.productId()).getStock() < li.quantity())
+                .toList();
+    }
+
+    /** Two lines for the same product are checked as one combined quantity. */
+    private static List<LineItem> mergeByProduct(List<LineItem> lineItems) {
+        Map<String, Integer> totals = new LinkedHashMap<>();
+        for (LineItem li : lineItems) {
+            totals.merge(li.productId(), li.quantity(), Integer::sum);
+        }
+        return totals.entrySet().stream()
+                .map(e -> new LineItem(e.getKey(), e.getValue()))
+                .toList();
+    }
+
+    private static String describe(List<LineItem> items) {
+        return String.join(", ", items.stream().map(li -> li.quantity() + "x " + li.productId()).toList());
     }
 
     private Order buildOrder(OrderStatus status, String reason, List<LineItem> lineItems) {

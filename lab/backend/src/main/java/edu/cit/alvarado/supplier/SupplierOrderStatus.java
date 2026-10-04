@@ -18,5 +18,10 @@ public enum SupplierOrderStatus {
     DELIVERED,
     /** A business-level rejection (bad SKU, bad qty, bad ref) - retrying
      *  the same order would not help; the mapping/config needs fixing. */
-    FAILED
+    FAILED,
+    /** LegacySupply answered with a StatusCode its manual doesn't document
+     *  (e.g. 90). Terminal: not retried, not polled, not counted as a
+     *  restock on its way - so the product can be reordered again - and
+     *  logged loudly for a human to look at. */
+    UNRECOGNIZED
 }

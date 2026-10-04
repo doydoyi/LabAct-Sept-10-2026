@@ -1,3 +1,73 @@
+# Lab 4 — Tiangge Marketplace Channel (run your shop unattended)
+
+Once it starts, the app runs the Tiangge shop by itself. Nobody calls it.
+It finds out about orders by polling the Tiangge order feed.
+
+### New module: `edu.cit.alvarado.channel`
+
+| Type | Visibility | Role |
+|---|---|---|
+| `MarketplaceChannel` | **public** interface | The module's only contract: `status()` |
+| `ChannelStatus` | **public** record | Our own domain type for that status |
+| `ChannelStartup` | package-private | Go-live: first heartbeat → listings → stock → start feed |
+| `HeartbeatSender` | package-private | Task 1: heartbeat every `nextHeartbeatSeconds` (30s), on its own thread |
+| `ListingCatalog` | package-private | Task 2: every product with a LegacySupply mapping becomes a listing (`sellerSku` = our productId) |
+| `StockPublisher` | package-private | Task 3: `PUT /stock` driven only by Inventory's `StockChangedEvent` (AFTER_COMMIT), with no timer |
+| `FeedPoller` | package-private | Task 4: reads `/feed` every 3s from the stored cursor, oldest first, and catches up after a restart |
+| `OrderFeedProcessor` | package-private | Tasks 4–6: orders, cancellations, backorders, plus retries of anything Tiangge didn't acknowledge |
+| `TianggeOrderTranslator` | package-private | Anti-corruption layer: Tiangge lines ⇄ our `LineItem`, our `OrderStatus` ⇄ Tiangge decision |
+| `TianggeClient`, `TianggeJson` | package-private | HTTP + JSON, the 3 required headers, retry with backoff on 503/timeouts |
+| `FeedCursor`, `ProcessedFeedEvent`, `TianggeOrderLink` (+ repositories) | package-private | Durable cursor, processed eventIds, Tiangge order ⇄ shop order |
+| `ChannelGate` | package-private | Makes sure stock goes out *after* Tiangge has the decision |
+
+`edu.cit.alvarado.instance.AppInstance` generates a fresh UUID on every
+start and logs it (`==== Application instance ID: … ====`). Both
+`TianggeClient` and `LegacySupplyClient` send it as `X-Client-Instance` on
+every call.
+
+### Order and Inventory still don't know Tiangge exists
+
+- Tiangge orders go through the same `OrderService` (all-or-nothing
+  reservation, Lab 2 cancellation/restock) as React UI orders.
+- `OrderService.placeOrderOrBackorder(items, backorderAllowed)` is generic.
+  The caller decides whether a short order may be backordered. The Order
+  module doesn't know that this means "an open LegacySupply PO exists".
+  `fulfillBackorder(id)` turns a `BACKORDERED` order into `CONFIRMED`,
+  all-or-nothing.
+- Inventory publishes `StockChangedEvent` after every reserve or restock.
+  It has no idea who listens.
+- Inventory writes now lock the row (`SELECT … FOR UPDATE`), so a UI order
+  and a Tiangge order arriving at the same moment cannot oversell.
+
+### Exactly-once, restarts, failures
+
+- **Redelivery:** an `eventId` already in `tiangge_processed_events` is
+  skipped. A Tiangge `orderId` already in `tiangge_orders` never creates a
+  second shop order.
+- **Atomic:** creating the shop order, linking it, recording the eventId,
+  and moving the cursor happen in **one DB transaction**.
+- **Restart:** the cursor lives in `tiangge_feed_cursor`, so a restarted app
+  continues from there and never re-reads the feed from the start.
+- **Tiangge slow or down:** decisions, resolutions, and cancellation
+  confirmations are retried with the same content. If they still fail, the
+  `…_reported` flag stays false and the next tick sends them again.
+- **Backorders (Task 6):** if an order is short, the app first makes sure a
+  LegacySupply PO is on its way, sized to cover the order. It then answers
+  `BACKORDERED` only if every short item has an open PO. When the delivery
+  lands, the backorder is filled and resolved `ACCEPTED`. It is resolved
+  `CANCELLED` if no restock is coming any more, or after 15 minutes.
+
+### Setup
+
+1. Run `lab/sql/lab4_tiangge.sql` in Supabase **once**, after `schema.sql`
+   and `lab3_supplier_orders.sql`. Re-running it resets the cursor.
+2. Set the environment variables listed in `lab/backend/.env.example`. The
+   API key comes from `LS_API_KEY` and is never committed.
+3. `cd lab/backend && mvn spring-boot:run`. Check
+   `GET http://localhost:8080/api/channel/status` and the self-check page.
+
+---
+
 # Modular Monolith — Order + Inventory + Notification (Lab 2)
 
 Extends the Lab 1 Order/Inventory monolith with multi-item orders,
