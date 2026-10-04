@@ -1,19 +1,35 @@
+# REFLECTION — Lab 4: Tiangge Marketplace
 
 ## Question 1
 
-PO-100333 (BuyerRef "RO-PROBE-4") ended with StatusCode 90, which is not in the documentation. How did you work out what it means, and what does your system now do with the stock that will never arrive?
+Event evt_d735e413b0acf29c (order TG-EUC43Y) reached your application twice, as seq 1 and seq 2, and you processed it once. Show the code and the stored data that made the second delivery harmless, and explain what would happen if your application restarted between the two.
 
-Honestly, when I checked the code for StatusCode 90, I realized it wasn't even coming from my actual app — it was from a manual curl request I ran directly against LegacySupply while I was testing (RO-PROBE-4), not through my real auto-reorder flow, so my system never actually tracked this specific order in the first place. Since the manual only documents codes 10, 20, 30, and 40 for the normal Accepted → Picking → Shipped → Delivered flow, and 90 is way outside that range, my best guess is that it's some kind of cancellation or void code, since a lot of systems put "something went wrong" statuses off on their own like that instead of mixing them into the normal sequence — but that's just an educated guess based on the pattern, not something the manual actually confirms. As for what my system does with stock that will never arrive: right now, since this specific order was never tracked, nothing happens to it at all, which isn't really "handling" it so much as just never knowing about it. But digging into this made me realize my real code actually has a gap: if a tracked order ever got an unrecognized status code like this, my mapStatusCode() function would just log a warning and mark it as PENDING, which is the same status I use for "not submitted yet, please retry" — so it would end up getting silently resubmitted forever by my retry job instead of getting flagged as something a human needs to look at. I ended up fixing this by adding a separate status just for unrecognized codes, so from now on the system won't confuse "never successfully sent" with "sent, but came back with something we don't understand," and it won't chase a delivery that isn't actually coming.
+The first thing `OrderFeedProcessor.handle()` does for every feed event is check whether its eventId has been handled before:
+
+```java
+if (processedEvents.existsById(event.eventId())) {
+    log.info("Feed seq={} eventId={} ({} {}) already processed - redelivery skipped", ...);
+    advanceCursor(event.seq());
+    return;
+}
+```
+
+At seq 1, evt_d735e413b0acf29c was new. So `handleOrderPlaced()` ran, and inside one `TransactionTemplate` transaction it did four things:
+- created the shop order through the same `OrderService.placeOrderOrBackorder()` my React UI uses;
+- saved a `tiangge_orders` row linking TG-EUC43Y to that shop order;
+- inserted `evt_d735e413b0acf29c` into `tiangge_processed_events` (event_id is the primary key);
+- moved `tiangge_feed_cursor.last_seq` to 1.
+
+At seq 2 the same eventId was already in `tiangge_processed_events`, so the check above logged "already processed - redelivery skipped" and only moved the cursor to 2. No second order was created, nothing was reserved again, and no second decision was sent. There is also a second guard: even with a different eventId, `links.existsById("TG-EUC43Y")` would have stopped a duplicate order, because `tiangge_orders` is keyed by the Tiangge orderId. If the app had restarted between seq 1 and seq 2, nothing would change, because both tables live in Postgres and not in memory: the new instance reads the stored cursor (1), asks for events after it, gets seq 2, and skips it the same way. If it had crashed in the middle of handling seq 1, the transaction would roll back the order, the link, the eventId and the cursor together, so on restart seq 1 would be processed cleanly once, never half-done or twice.
 
 ## Question 2
 
-LegacySupply never tells you how long a session lasts. Measure your session lifetime from your own logs, state the number, and explain how your adapter decides when to sign in again.
+During your restart test your application was down for about 248 seconds while 6 orders arrived. How did the restarted application find those orders, and how did it avoid handling earlier ones again?
 
-Based on my own logs, my session was still valid at least 30 seconds after I got it, and separately, a different session I obtained came back invalid the next time I tried to use it a few minutes later, so somewhere in between those two points is the real lifetime — I don't have a more precise number than that, since the manual never states one and my testing didn't happen to catch the exact expiration moment. Instead of trying to guess a duration and refresh on a timer, my adapter just reacts to what LegacySupply actually tells it: it keeps reusing the same session token until it gets back a 401 with E-AUTH-02, E-AUTH-03, or E-AUTH-07 (missing, unrecognized, or invalid session), at which point it throws away the old token, signs in again automatically, and retries that one request exactly once. This means I never have to know or guess the real lifetime at all — the system just responds correctly whenever LegacySupply decides the session is done, whether that's after a minute or an hour
+Nothing told the restarted app about those 6 orders; it found them by reading the feed itself. On startup `ChannelStartup` sends the first heartbeat, republishes listings and stock, and starts `FeedPoller`, which reads the last processed position from the `tiangge_feed_cursor` table and logs `Order feed polling started from stored cursor N`, where N is where the old instance stopped, not 0. It then calls `GET /feed?after=N&limit=50` and handles the events oldest first. It keeps requesting pages until one comes back with fewer than 50 events, so all 6 orders that arrived during the 248 seconds were found and decided in its first ticks. Earlier orders were not handled again for two reasons. First, `after=N` means Tiangge never sends them back. Second, any event Tiangge redelivers under a newer seq is still caught by its eventId in `tiangge_processed_events`. The cursor also only moves forward (`FeedCursor.advanceTo()` ignores lower values), and it is saved in the same transaction as each order, so it can never point before an order that was already created.
 
 ## Question 3
 
-The catalog reports PackSize and orders report Uom "CS". Using one of your own orders, show the arithmetic from "units your Inventory needed" to the Qty you sent, and to the units your Inventory received on delivery.
+Tiangge may deliver the same event more than once. Describe how your application recognises an event it has already handled, where that knowledge is stored, and whether it survives a restart.
 
-
-For order RO-2 (product P100), my Inventory had dropped to 4 units in stock against my target level of 20, so I needed 16 more units. P100's PackSize from LegacySupply's catalog is 6 units per pack, so I rounded 16 up to the nearest whole pack: ceil(16 / 6) = 3 packs, and sent Qty: 3 for SupplierSku BTK-1241 in the purchase order. LegacySupply's Uom for this item came back as "CS", confirming the 3 I sent was interpreted as 3 packs, not 3 individual units. Once the order was marked Delivered, my own log confirmed exactly 18 units of P100 were restocked — which is precisely 3 packs × 6 units per pack = 18, matching the math on both ends of the round trip.
+My application recognises an event by its `eventId`, not its `seq`: Tiangge gives a redelivered event a new seq, so the cursor alone cannot detect duplicates. Every handled eventId is stored as a row in the `tiangge_processed_events` table (event_id primary key, plus seq, type, Tiangge orderId and time). `OrderFeedProcessor.handle()` checks this table before doing anything with an event. That row is written in the same database transaction as the shop order, the `tiangge_orders` link and the cursor update, so "order created" and "event recorded as handled" can never get out of step. As a second layer, `tiangge_orders` is keyed by the Tiangge orderId, so one Tiangge order can only ever become one order in my system. Because all of this lives in the Postgres (Supabase) database and not in a Java `Set` in memory, it survives a restart, as the restart test showed: the new instance with a new instance ID still skipped everything the old one had already handled.
